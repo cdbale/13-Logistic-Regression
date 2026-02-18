@@ -1,0 +1,199 @@
+---
+title: "13-starter-code"
+format: docx
+editor: visual
+---
+
+# Libraries
+
+Import our libraries.
+
+```{r}
+# Load packages.
+library(tidyverse)
+library(tidymodels)
+```
+
+# Preprocessing
+
+Before implementing our model, we need to *preprocess the data* to make it appropriate for the model.
+
+```{r}
+soup_data <- read_csv("soup_data.csv")
+```
+
+Part of the pre-processing in this case is creating our outcome variable. Let's examine the distribution of `Sales`.
+
+```{r}
+soup_data |>
+  ggplot(aes(x = Sales)) +
+  geom_histogram()
+```
+
+What do you notice?
+
+If we look at the 80th percentile, it is about $20,000. In other words, 80% of sales periods have sales that are less than 20,000. We'll use this our cutoff for what defines a `top-selling` period.
+
+```{r}
+soup_data |>
+  summarize(p95_sales = quantile(Sales, 0.80))
+```
+
+Define our top selling variable
+
+```{r}
+soup_data <- soup_data |> 
+  mutate(top_selling = if_else(Sales > 20000, 1, 0) |> factor())
+```
+
+We'll also split the data into training and testing sets.
+
+```{r}
+# Split data.
+soup_split <- initial_time_split(soup_data, prop = 0.90)
+```
+
+# Your Turn!
+
+Define a new recipe called `soup_recipe` based on the training data that prepares data for a model where `top_selling` is our dependent variable and `Any_Price_Decr_Spend` and `Retailer_Trade_Areas` are our independent variables. Include appropriate pre-processing steps and prep the recipe.
+
+```{r}
+
+```
+
+Apply the recipe to the training and testing data.
+
+```{r}
+# Apply the recipe to the training and testing data.
+soup_training <- soup_recipe |>
+  bake(training(soup_split))
+
+soup_testing <- soup_recipe |>
+  bake(testing(soup_split))
+```
+
+# Model Fitting
+
+Specify the model and engine and fit the model. When we *fit* the model (a.k.a., training, calibrating, or estimating the model) we are getting parameter estimates.
+
+```{r}
+# Fit a logistic regression.
+fit <- logistic_reg() |> 
+  set_engine("glm") |> 
+  fit(top_selling ~ ., data = soup_training)
+```
+
+# Evaluate the Model
+
+Remember, our goal is to use the model to *estimate* the unobserved parameters from the data. In other words, parameter estimates are the information we are extracting from the data to inform our managerial decision.
+
+```{r}
+# Compare parameter estimates.
+tidy(fit, conf.int = TRUE) |> 
+  ggplot(aes(y = term)) + 
+  geom_point(aes(x = estimate)) + 
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high)) +
+  geom_vline(xintercept = 0, color = "red")
+```
+
+```{r}
+# What about interpreting the parameter estimates?
+tidy(fit, conf.int = TRUE)
+```
+
+We can also interpret the parameter estimates as changes in probabilities.
+
+```{r}
+# Interpreting the parameter estimates as probabilities.
+tidy(fit, conf.int = TRUE) |> 
+  mutate(
+    estimate = plogis(estimate),
+    conf.low = plogis(conf.low),
+    conf.high = plogis(conf.high)
+  )
+```
+
+Instead of measuring how well a model fits the *data*, we should measure how well a model *predicts*. This predictive fit doesn't have the same risk of overfitting.
+
+Instead of RMSE, we will compute the **accuracy** of the logistic regression. Once again, closer to 1 is better.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing)|>
+  bind_cols(soup_testing) |>
+  accuracy(truth = top_selling, estimate = .pred_class)
+```
+
+Compute model accuracy with a custom threshold.
+
+```{r}
+threshold <- 0.6
+
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing, type = "prob") |>
+  bind_cols(soup_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  accuracy(truth = top_selling, estimate = pred_y)
+```
+
+Accuracy can also be summarized using a **confusion matrix**.
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = soup_testing) |>
+  bind_cols(soup_testing) |>
+  conf_mat(truth = top_selling, estimate = .pred_class)
+```
+
+How do we interpret this matrix?
+
+# Counterfactuals
+
+Once we have a best-fitting model, we want to predict **counterfactuals**. A counterfactual is a prediction of what will happen if we intervene in the process in a certain way.
+
+```{r}
+# Column names, type, and preprocessing needs to match the recipe.
+scenarios <- tibble(
+  # generate spend on price decreases using 4 values from 0 to 10,000
+  # repeat those spend values 4 times, one repetition for each trade area
+  Any_Price_Decr_Spend = seq(from = 0, to = 10000, by = 10000 / 3) |> rep(4),
+  # generate the trade areas, repeat 4 times for each value of spend on price decreases
+  Retailer_Trade_Areas = unique(soup_data$Retailer_Trade_Areas) |> rep(4) |> sort(),
+  top_selling = factor(1)
+)
+
+scenarios
+```
+
+Remember to remove the outcome from `new_data` before using it in `predict()`.
+
+```{r}
+# Apply the recipe to the training data.
+scenarios <- soup_recipe |>
+  bake(scenarios) |> 
+  select(-top_selling)
+
+scenarios
+```
+
+Instead of predicting binary outcomes, we can also predict the probability of success.
+
+```{r}
+# Predict success (no prediction intervals).
+predict(fit, new_data = scenarios, type = "prob") |> 
+  bind_cols(scenarios) |> 
+  mutate(Any_Price_Decr_Spend = exp(Any_Price_Decr_Spend)) |> 
+  arrange(desc(.pred_1))
+```
+
+## Live Coding
+
+Once again, `iFood` has requested our help. They want statistically backed insights into which types of customers have been most likely to respond to their previous marketing campaign(s). Let's perform the appropriate pre-processing and modeling steps to answer their question.
+
+```{r}
+
+```
+

@@ -1,13 +1,13 @@
 ---
-title: "Exercise 15"
-author: "Marc Dotson"
+title: "Exercise 12"
+author: "Cameron Bale"
 format: docx
 ---
 
-Return one last time to `soup_data` and the models from the previous exercises.
+Return one last time to `soup_data` and the models from the previous exercises 9, 10, 11.
 
-1. Create a discrete outcome variable `top_selling` based on `Sales > 375000` using `if_else()` and `factor()`.
-2. Preprocess the data using `initial_time_split()` with just 75% of the data in training and fit the same models again using the preprocessed training data, now as logistic regressions with the new `top_selling` variable as the outcome variable. You can ignore any warnings when fitting each model.
+1. Create a discrete outcome variable `top_selling` based on `Sales > 250000` using `if_else()` and `factor()`.
+2. Preprocess the data using `initial_time_split()` with just 75% of the data in training and fit the same models again using the preprocessed training data, now as logistic regressions with the new `top_selling` variable as the outcome variable.
 3. Compute the accuracy using the preprocessed testing data. Is the same model as last time the best-fitting model again?
 4. Compute a confusion matrix for the best-fitting model and accurately interpret it.
 5. Render the Quarto document into Word and upload to Canvas.
@@ -30,16 +30,14 @@ library(tidyverse)
 library(tidymodels)
 
 # Import, filter, and mutate data.
-soup_data <- read_csv(here::here("Data", "soup_data.csv")) |> 
+soup_data <- read_csv("soup_data.csv") |> 
   filter(Retailer_Trade_Areas == "WEST CENSUS TA", Brand_High == "CAMPBELL'S") |>
-  mutate(top_selling = if_else(Sales > 375000, 1, 0) |> factor())
+  mutate(top_selling = if_else(Sales > 250000, 1, 0) |> factor())
 ```
-
-Clearly we need to preprocess these variables by applying the log transform.
 
 ## Preprocess Data
 
-Let's split the data, prepare a recipe using the training data, and apply it to both the training and testing data.
+Let's split the data, prepare a recipe using the training data (we'll do the log-transformation for our explanatory variables as we did before), and apply it to both the training and testing data.
 
 ```{r}
 # Split the data.
@@ -80,22 +78,6 @@ fit_02 <- logistic_reg() |>
     top_selling ~ Any_Feat_Spend + Any_Price_Decr_Spend, 
     data = soup_training
   )
-
-# Model without feature spend.
-fit_03 <- logistic_reg() |> 
-  set_engine(engine = "glm") |> 
-  fit(
-    top_selling ~ Any_Disp_Spend + Any_Price_Decr_Spend, 
-    data = soup_training
-  )
-
-# Model without price decrease spend.
-fit_04 <- logistic_reg() |> 
-  set_engine(engine = "glm") |> 
-  fit(
-    top_selling ~ Any_Disp_Spend + Any_Feat_Spend, 
-    data = soup_training
-  )
 ```
 
 ## Compute Predictive Fit
@@ -114,37 +96,19 @@ accuracy_02 <- fit_02 |>
   bind_cols(soup_testing) |>
   accuracy(truth = top_selling, estimate = .pred_class)
 
-accuracy_03 <- fit_03 |> 
-  predict(new_data = soup_testing) |>
-  bind_cols(soup_testing) |>
-  accuracy(truth = top_selling, estimate = .pred_class)
-
-accuracy_04 <- fit_04 |> 
-  predict(new_data = soup_testing) |>
-  bind_cols(soup_testing) |>
-  accuracy(truth = top_selling, estimate = .pred_class)
-
 # Compare accuracy.
 tibble(
   model = c(
     "Full model", 
-    "Model without display spend", 
-    "Model without feature spend", 
-    "Model without price decrease spend"
-  )
-) |> 
+    "Model without display spend")) |> 
   bind_cols(
     bind_rows(
       accuracy_01,
-      accuracy_02,
-      accuracy_03,
-      accuracy_04
-    )
-  ) |> 
+      accuracy_02)) |> 
   arrange(desc(.estimate))
 ```
 
-Based on accuracy, the best-fitting model is the full model or the model without feature spend. When it was `Sales` as the outcome, the model without price decrease spend was the best-fitting model.
+Based on accuracy, the best-fitting model is the full model.
 
 ## Create a Confusion Matrix
 
@@ -157,5 +121,4 @@ fit_01 |>
   conf_mat(truth = top_selling, estimate = .pred_class)
 ```
 
-This confusion matrix shows that we have *perfect* classification with this model. The diagonal shows the correct predictions. The off-diagonal shows where we've predicted incorrectly -- which here is 0.
-
+This confusion matrix shows that we had mostly correct predictions (10/13) on the diagonal, with two observations predicted to *not* be top selling periods that actually were, and one period predicted to be a top selling period that wasn't.

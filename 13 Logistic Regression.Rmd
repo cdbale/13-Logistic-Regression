@@ -1,6 +1,6 @@
 ---
 title: "Logistic Regression"
-subtitle: "MKTG 411 Marketing Analytics"
+subtitle: "MCB Consulting Group (MKTG 411)"
 output: 
   ioslides_presentation:
     widescreen: true
@@ -23,20 +23,17 @@ output:
 ![](Figures/workflow-inference.png){width=900px}
 </center>
 
-## Consider | Consider the Data Generating Process
+## Consider | Consider the Story
 
-Remember, your story about the possible *data generating process* is the beginning of a model.
+Remember, your story about how explanatory variables affect your outcome of interest is the beginning of a model.
 
-Instead of sales, let's consider what might drive a "top-selling" sales period?
+Thus far, we've been building linear regression models for Kroger to evaluate drivers of sales in their soup category. Now, they've come to us with a new request. We are to identify drivers of what management describes as "top-selling" sales periods - sales periods where category sales are significantly higher than usual.
 
-- "Top-selling" is a binary variable.
-- Promotions could certainly have an impact.
-- The region of the country should matter.
-- Anything else?
+What might drive a "top-selling" sales period? What is fundamentally different about our independent variable in this model vs. our previous models?
 
 ## Build | Build a Statistical Model
 
-Remember, if a model starts with a story about the data generating process, we translate that story into math and build a statistical model. So far, we've used:
+We translate our story into math and build a statistical model. So far, we've used:
 
 $$y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + ... + \beta_p x_p + \epsilon, \text{ where } \epsilon \sim Normal(0, 1)$$
 
@@ -50,7 +47,7 @@ But what if $y$ is **discrete** rather than continuous?
 
 ---
 
-Instead of a *regression* where the outcome is continuous, we need a model for **classification** where the outcome is discrete (specifically binary, where $y$ is zero or one).
+Instead of a *linear* regression where the outcome is continuous, we need a model for **classification** where the outcome is discrete (specifically binary, where $y$ is zero or one).
 
 Instead of modeling $y$, what if we modeled the probability of $y$?
 
@@ -65,7 +62,7 @@ We need to transform the linear model so that it equals a probability.
 
 ## Logistic Regression
 
-This resulting classification model is called **logistic regression** (after the function applied to the linear model).
+This resulting classification model is called **logistic regression** (named after the function applied to the linear model).
 
 $$
 \text{Pr}(y) = {\exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right) \over 1 + \exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right)}
@@ -86,91 +83,88 @@ A few things to note:
 - There are many models that follow this process of transforming a linear model to work with different outcome variables. Altogether they are known as **generalized linear models** (GLMs).
 - Logistic regression is the most commonly used GLM.
 
-## Simulate | Simulate Data and Recover Parameters
-
-Remember that we can assume our model *is* the data generating process, *choose* values for the parameters, and generate or *simulate* data using the model. Why?
-
-1. Prepare our data analysis before getting real data.
-2. Prove our code is working by recovering parameter values.
-3. Investigate potential problems with the data.
-
----
-
-Load packages and simulate data using a logistic regression.
-
-$$
-\text{Pr}(y) = {\exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right) \over 1 + \exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right)}
-$$
+## Let's Implement a Logistic Regression...
 
 ```{r include=FALSE}
 # Load packages.
 library(tidyverse)
 library(tidymodels)
-```
-
-```{r}
-set.seed(42)    # Set the randomization seed.
-n <- 500        # Number of observations.
-beta0 <- -1.30  # Intercept parameter.
-beta1 <- 0.25   # Slope parameter for promotion spend.
-beta2 <- 1.20   # Slope parameter for cold region.
-
-# Simulate data.
-sim_data <- tibble(
-  x1 = runif(n, min = 0, max = 10),
-  x2 = rbinom(n, size = 1, prob = 0.30),
-  prob_y = exp(beta0 + beta1 * x1 + beta2 * x2) / 
-    (1 + exp(beta0 + beta1 * x1 + beta2 * x2)),
-  y = rbinom(n, size = 1, prob = prob_y) |> factor()
-)
-```
-
----
-
-```{r}
-sim_data
-```
-
----
-
-Can we recover parameters? Remember that `beta0 = -1.30`, `beta1 = 0.25`, and `beta2 = 1.20`.
-
-```{r}
-# Fit a logistic regression.
-sim_fit <- logistic_reg() |> 
-  set_engine(engine = "glm") |> 
-  fit(y ~ x1 + x2, data = sim_data)
-
-# Tidy output.
-tidy(sim_fit, conf.int = TRUE)
+# library(ggplot2)
 ```
 
 ## Preprocess | Preprocess Data for Modeling
 
-Remember, we often need to *preprocess the data* to model it or to make it easier for the model to use.
+Before implementing our model, we need to *preprocess the data* to make it appropriate for the model.
 
-```{r message=FALSE}
-# Import soup data.
-soup_data <- read_csv(here::here("Data", "soup_data.csv")) |> 
-  mutate(top_selling = if_else(Sales > 20000, 1, 0) |> factor())
+```{r}
+soup_data <- read_csv("soup_data.csv")
+```
 
-# Split data.
-soup_split <- initial_time_split(soup_data, prop = 0.90)
+## Defining our Outcome Variable
+
+Part of the pre-processing in this case is creating our outcome variable.
+
+```{r echo = FALSE}
+soup_data |>
+  ggplot(aes(x = Sales)) +
+  geom_histogram()
 ```
 
 ---
 
-Remember, using a recipe allows us to apply our preprocessing steps to whatever data we'd like.
+If we look at the 80th percentile, it is about $20,000.
 
 ```{r}
+soup_data |>
+  summarize(p95_sales = quantile(Sales, 0.80))
+```
+
+## Define Top Selling
+
+```{r}
+# Import soup data.
+soup_data <- soup_data |> 
+  mutate(top_selling = if_else(Sales > 20000, 1, 0) |> factor())
+```
+
+---
+
+We'll also split the data into training and testing sets.
+
+```{r}
+# Split data.
+soup_split <- initial_time_split(soup_data, prop = 0.90)
+```
+
+## Your Turn!
+
+Define a new recipe called `soup_recipe` based on the training data that prepares data for a model where `top_selling` is our dependent variable and `Any_Price_Decr_Spend` and `Retailer_Trade_Areas` are our independent variables. Include appropriate pre-processing steps and prep the recipe.
+
+## Expected Output
+
+```{r echo = FALSE}
 # Prepare a preprocessing recipe.
-soup_recipe <- training(soup_split) |> 
+(soup_recipe <- training(soup_split) |> 
   recipe(top_selling ~ Any_Price_Decr_Spend + Retailer_Trade_Areas) |> 
   step_log(all_numeric(), offset = 1) |> 
   step_dummy(Retailer_Trade_Areas) |> 
-  prep()
+  prep())
+```
+
+## Solution
+
+```{r eval = FALSE}
+# Prepare a preprocessing recipe.
+(soup_recipe <- training(soup_split) |> 
+  recipe(top_selling ~ Any_Price_Decr_Spend + Retailer_Trade_Areas) |> 
+  step_log(all_numeric(), offset = 1) |> 
+  step_dummy(Retailer_Trade_Areas) |> 
+  prep())
+```
 
 # Apply the recipe to the training and testing data.
+
+```{r}
 soup_training <- soup_recipe |>
   bake(training(soup_split))
 
@@ -198,7 +192,7 @@ Remember, our goal is to use the model to *estimate* the unobserved parameters f
 tidy(fit, conf.int = TRUE) |> 
   ggplot(aes(y = term)) + 
   geom_point(aes(x = estimate)) + 
-  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = .1) +
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high)) +
   geom_vline(xintercept = 0, color = "red")
 ```
 
@@ -209,7 +203,7 @@ tidy(fit, conf.int = TRUE) |>
 tidy(fit, conf.int = TRUE) |> 
   ggplot(aes(y = term)) + 
   geom_point(aes(x = estimate)) + 
-  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = .1) +
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high)) +
   geom_vline(xintercept = 0, color = "red")
 ```
 
@@ -312,7 +306,7 @@ scenarios <- tibble(
 
 ---
 
-Remember to remove the outcome (and any superfluous explanatory variables) from `new_data` before using it in `predict()`.
+Remember to remove the outcome from `new_data` before using it in `predict()`.
 
 ```{r}
 # Apply the recipe to the training data.
@@ -347,13 +341,16 @@ predict(fit, new_data = scenarios, type = "prob") |>
 
 - Project week.
 
-## Exercise 14
+## Live Coding
 
-Return one last time to `soup_data` and the models from the previous exercises.
+Once again, `iFood` has requested our help. They want statistically backed insights into which types of customers have been most likely to respond to their previous marketing campaign(s). Let's perform the appropriate pre-processing and modeling steps to answer their question.
+
+## Exercise 12
+
+Return one last time to `soup_data` and the models from the previous exercises 9, 10, 11.
 
 1. Create a discrete outcome variable `top_selling` based on `Sales > 375000` using `if_else()` and `factor()`.
-2. Preprocess the data using `initial_time_split()` with just 75% of the data in training and fit the same models again using the preprocessed training data, now as logistic regressions with the new `top_selling` variable as the outcome variable. *You can ignore any warnings when fitting each model.*
+2. Preprocess the data using `initial_time_split()` with just 75% of the data in training and fit the same models again using the preprocessed training data, now as logistic regressions with the new `top_selling` variable as the outcome variable.
 3. Compute the accuracy using the preprocessed testing data. Is the same model as last time the best-fitting model again?
 4. Compute a confusion matrix for the best-fitting model and accurately interpret it.
 5. Render the Quarto document into Word and upload to Canvas.
-
