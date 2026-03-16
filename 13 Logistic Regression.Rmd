@@ -29,7 +29,7 @@ Remember, your story about how explanatory variables affect your outcome of inte
 
 Thus far, we've been building linear regression models for Kroger to evaluate drivers of sales in their soup category. Now, they've come to us with a new request. We are to identify drivers of what management describes as "top-selling" sales periods - sales periods where category sales are significantly higher than usual.
 
-What might drive a "top-selling" sales period? What is fundamentally different about our independent variable in this model vs. our previous models?
+How could we define a "top-selling" sales period? What might drive a "top-selling" sales period? What is fundamentally different about our dependent variable in this model vs. our previous models?
 
 ## Build | Build a Statistical Model
 
@@ -53,16 +53,16 @@ Instead of modeling $y$, what if we modeled the probability of $y$?
 
 $$\text{Pr}(y) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + ... + \beta_p x_p$$
 
-Closer, but still not right.
+Closer, but still not appropriate. Why?
 
 $$\text{Pr}(y) \in (0, 1)$$
 $$\beta_0 + \beta_1 x_1 + \beta_2 x_2 + ... + \beta_p x_p \in (−\infty, \infty)$$
 
-We need to transform the linear model so that it equals a probability.
+We need to transform the linear model so that its output is a probability.
 
 ## Logistic Regression
 
-This resulting classification model is called **logistic regression** (named after the function applied to the linear model).
+We will use a classification model called **logistic regression** (named after the logistic function which is applied to the linear model).
 
 $$
 \text{Pr}(y) = {\exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right) \over 1 + \exp\left(\beta_0 + \beta_1 x_1 + \dotsc + \beta_px_p\right)}
@@ -85,24 +85,23 @@ A few things to note:
 
 ## Let's Implement a Logistic Regression...
 
-```{r include=FALSE}
+```{r}
 # Load packages.
 library(tidyverse)
 library(tidymodels)
-# library(ggplot2)
 ```
 
 ## Preprocess | Preprocess Data for Modeling
 
-Before implementing our model, we need to *preprocess the data* to make it appropriate for the model.
+Before fitting our model, we need to *preprocess the data* to make it appropriate for the model.
 
 ```{r}
 soup_data <- read_csv("soup_data.csv")
 ```
 
-## Defining our Outcome Variable
+---
 
-Part of the pre-processing in this case is creating our outcome variable.
+Since `top_selling` doesn't already exist in our data, we will create it as part of the pre-processing (but prior to creating a recipe).
 
 ```{r echo = FALSE}
 soup_data |>
@@ -112,7 +111,7 @@ soup_data |>
 
 ---
 
-If we look at the 80th percentile, it is about $20,000.
+If we look at the 80th percentile of `Sales`, it is about $20,000.
 
 ```{r}
 soup_data |>
@@ -122,7 +121,7 @@ soup_data |>
 ## Define Top Selling
 
 ```{r}
-# Import soup data.
+# define top selling as any week in which sales were greater than 20,000
 soup_data <- soup_data |> 
   mutate(top_selling = if_else(Sales > 20000, 1, 0) |> factor())
 ```
@@ -146,7 +145,7 @@ Define a new recipe called `soup_recipe` based on the training data that prepare
 # Prepare a preprocessing recipe.
 (soup_recipe <- training(soup_split) |> 
   recipe(top_selling ~ Any_Price_Decr_Spend + Retailer_Trade_Areas) |> 
-  step_log(all_numeric(), offset = 1) |> 
+  step_log(Any_Price_Decr_Spend, offset = 1) |> 
   step_dummy(Retailer_Trade_Areas) |> 
   prep())
 ```
@@ -157,12 +156,12 @@ Define a new recipe called `soup_recipe` based on the training data that prepare
 # Prepare a preprocessing recipe.
 (soup_recipe <- training(soup_split) |> 
   recipe(top_selling ~ Any_Price_Decr_Spend + Retailer_Trade_Areas) |> 
-  step_log(all_numeric(), offset = 1) |> 
+  step_log(Any_Price_Decr_Spend, offset = 1) |> 
   step_dummy(Retailer_Trade_Areas) |> 
   prep())
 ```
 
-# Apply the recipe to the training and testing data.
+## Apply the recipe to the training and testing data.
 
 ```{r}
 soup_training <- soup_recipe |>
@@ -183,7 +182,60 @@ fit <- logistic_reg() |>
   fit(top_selling ~ ., data = soup_training)
 ```
 
-## Evaluate | Parameter Estimates, Significance, and Predictive Fit
+---
+
+Remember that instead of measuring how well a model fits the *data*, we should measure how well a model *predicts*. This predictive fit doesn't have the same risk of overfitting.
+
+Instead of RMSE, we will compute the **accuracy** of the logistic regression. Once again, closer to 1 is better.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing)|>
+  bind_cols(soup_testing) |>
+  accuracy(truth = top_selling, estimate = .pred_class)
+```
+
+---
+
+Accuracy can also be summarized using a **confusion matrix**. How is this matrix interpreted? Is our model making one type of error more than another?
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = soup_testing) |>
+  bind_cols(soup_testing) |>
+  conf_mat(truth = top_selling, estimate = .pred_class)
+```
+
+--- 
+
+The `predict` function uses a threshold of `0.5` by default. If we want to adjust for a tendency for False Positives or False Negatives, we can use a custom threshold instead.
+
+```{r}
+threshold <- 0.45
+
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing, type = "prob") |>
+  bind_cols(soup_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  accuracy(truth = top_selling, estimate = pred_y)
+```
+
+--- 
+
+Confusion matrix based on custom threshold.
+
+```{r}
+fit |> 
+  predict(new_data = soup_testing, type = "prob") |>
+  bind_cols(soup_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  conf_mat(truth = top_selling, estimate = pred_y)
+```
+
+## Evaluate | Parameter Estimates, Significance, and Counterfactuals
 
 Remember, our goal is to use the model to *estimate* the unobserved parameters from the data. In other words, parameter estimates are the information we are extracting from the data to inform our managerial decision.
 
@@ -216,78 +268,6 @@ tidy(fit, conf.int = TRUE)
 
 Each $\beta$ represents the expected change in the **log-odds** of "success" (getting a one in the binary outcome) for a one-unit increase in the value of X, holding all other variables fixed (relative to the baseline level if discrete).
 
----
-
-$$
-\text{Pr}(\text{top_selling}) = {\exp\left(-6.74 + 0.75 \times \text{Any_Price_Decr_Spend} + \ldots \right) \over 1 + \exp\left(-6.74 + 0.75 \times \text{Any_Price_Decr_Spend} + \ldots \right)}
-$$
-
-Use $plogis(\beta)$ to obtain the expected change in *probability* of success relative to a baseline level of 0 for all other predictors (including the intercept!)
-
----
-
-```{r}
-# Interpreting the parameter estimates as probabilities.
-tidy(fit, conf.int = TRUE) |> 
-  mutate(
-    estimate = plogis(estimate),
-    conf.low = plogis(conf.low),
-    conf.high = plogis(conf.high)
-  )
-```
-
-
-## Why is the probability interpretation so weird?
-
-Unfortunately, we don't have an 'easy' interpretation of the coefficients' effects on the probability of success. Why?
-
-<center>
-
-![](Figures/logistic_function.png){width=600px}
-
-<center>
-
----
-
-Remember that instead of measuring how well a model fits the *data*, we should measure how well a model *predicts*. This predictive fit doesn't have the same risk of overfitting.
-
-Instead of RMSE, we will compute the **accuracy** of the logistic regression. Once again, closer to 1 is better.
-
-```{r}
-# Compute model accuracy.
-fit |> 
-  predict(new_data = soup_testing)|>
-  bind_cols(soup_testing) |>
-  accuracy(truth = top_selling, estimate = .pred_class)
-```
-
---- 
-
-Compute model accuracy with a custom threshold.
-
-```{r}
-threshold <- 0.6
-
-# Compute model accuracy.
-fit |> 
-  predict(new_data = soup_testing, type = "prob") |>
-  bind_cols(soup_testing) |>
-  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
-  accuracy(truth = top_selling, estimate = pred_y)
-```
-
----
-
-Accuracy can also be summarized using a **confusion matrix**.
-
-```{r}
-# Confusion matrix.
-fit |> 
-  predict(new_data = soup_testing) |>
-  bind_cols(soup_testing) |>
-  conf_mat(truth = top_selling, estimate = .pred_class)
-```
-
 ## Predict | Counterfactual Predictions
 
 Once we have a best-fitting model, we want to predict **counterfactuals**. A counterfactual is a prediction of what will happen if we intervene in the process in a certain way.
@@ -319,7 +299,7 @@ scenarios
 
 ---
 
-Instead of predicting binary outcomes, we can also predict the probability of success.
+Since multiple counterfactual scenarios might be predicted to produce a top-selling sales period, we will examine the `probability of success` for each scenario. In other words, which counterfactual is *most likely* to result in a top-selling sales period?
 
 ```{r}
 # Predict success (no prediction intervals).
@@ -339,7 +319,7 @@ predict(fit, new_data = scenarios, type = "prob") |>
 
 *Next Time*
 
-- Project week.
+- Start the Predictive Unit
 
 ## Live Coding
 
@@ -349,7 +329,7 @@ Once again, `iFood` has requested our help. They want statistically backed insig
 
 Return one last time to `soup_data` and the models from the previous exercises 9, 10, 11.
 
-1. Create a discrete outcome variable `top_selling` based on `Sales > 375000` using `if_else()` and `factor()`.
+1. Create a discrete outcome variable `top_selling` based on `Sales > 250000` using `if_else()` and `factor()`.
 2. Preprocess the data using `initial_time_split()` with just 75% of the data in training and fit the same models again using the preprocessed training data, now as logistic regressions with the new `top_selling` variable as the outcome variable.
 3. Compute the accuracy using the preprocessed testing data. Is the same model as last time the best-fitting model again?
 4. Compute a confusion matrix for the best-fitting model and accurately interpret it.

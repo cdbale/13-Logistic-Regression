@@ -32,7 +32,7 @@ soup_data |>
 
 What do you notice?
 
-If we look at the 80th percentile, it is about $20,000. In other words, 80% of sales periods have sales that are less than 20,000. We'll use this our cutoff for what defines a `top-selling` period.
+If we look at the 80th percentile, it is about \$20,000. In other words, 80% of sales periods have sales that are less than 20,000. We'll use this our cutoff for what defines a `top-selling` period.
 
 ```{r}
 soup_data |>
@@ -85,6 +85,53 @@ fit <- logistic_reg() |>
 
 # Evaluate the Model
 
+Instead of measuring how well a model fits the *data*, we should measure how well a model *predicts*. This predictive fit doesn't have the same risk of overfitting.
+
+Instead of RMSE, we will compute the **accuracy** of the logistic regression. Closer to 1 is better.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing)|>
+  bind_cols(soup_testing) |>
+  accuracy(truth = top_selling, estimate = .pred_class)
+```
+
+Accuracy can also be summarized using a **confusion matrix**.
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = soup_testing) |>
+  bind_cols(soup_testing) |>
+  conf_mat(truth = top_selling, estimate = .pred_class)
+```
+
+The `predict` function uses a threshold of `0.5` default. If we want to adjust for a tendency for False Positives or False Negatives, we can use a custom threshold instead.
+
+```{r}
+threshold <- 0.45
+
+# Compute model accuracy.
+fit |> 
+  predict(new_data = soup_testing, type = "prob") |>
+  bind_cols(soup_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  accuracy(truth = top_selling, estimate = pred_y)
+```
+
+Confusion matrix based on custom threshold.
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = soup_testing) |>
+  bind_cols(soup_testing) |>
+  conf_mat(truth = top_selling, estimate = .pred_class)
+```
+
+# Evaluate Parameters
+
 Remember, our goal is to use the model to *estimate* the unobserved parameters from the data. In other words, parameter estimates are the information we are extracting from the data to inform our managerial decision.
 
 ```{r}
@@ -100,55 +147,6 @@ tidy(fit, conf.int = TRUE) |>
 # What about interpreting the parameter estimates?
 tidy(fit, conf.int = TRUE)
 ```
-
-We can also interpret the parameter estimates as changes in probabilities.
-
-```{r}
-# Interpreting the parameter estimates as probabilities.
-tidy(fit, conf.int = TRUE) |> 
-  mutate(
-    estimate = plogis(estimate),
-    conf.low = plogis(conf.low),
-    conf.high = plogis(conf.high)
-  )
-```
-
-Instead of measuring how well a model fits the *data*, we should measure how well a model *predicts*. This predictive fit doesn't have the same risk of overfitting.
-
-Instead of RMSE, we will compute the **accuracy** of the logistic regression. Once again, closer to 1 is better.
-
-```{r}
-# Compute model accuracy.
-fit |> 
-  predict(new_data = soup_testing)|>
-  bind_cols(soup_testing) |>
-  accuracy(truth = top_selling, estimate = .pred_class)
-```
-
-Compute model accuracy with a custom threshold.
-
-```{r}
-threshold <- 0.6
-
-# Compute model accuracy.
-fit |> 
-  predict(new_data = soup_testing, type = "prob") |>
-  bind_cols(soup_testing) |>
-  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
-  accuracy(truth = top_selling, estimate = pred_y)
-```
-
-Accuracy can also be summarized using a **confusion matrix**.
-
-```{r}
-# Confusion matrix.
-fit |> 
-  predict(new_data = soup_testing) |>
-  bind_cols(soup_testing) |>
-  conf_mat(truth = top_selling, estimate = .pred_class)
-```
-
-How do we interpret this matrix?
 
 # Counterfactuals
 
@@ -179,7 +177,7 @@ scenarios <- soup_recipe |>
 scenarios
 ```
 
-Instead of predicting binary outcomes, we can also predict the probability of success.
+Since multiple counterfactual scenarios might be predicted to produce a top-selling sales period, we will examine the probability of success for each scenario. In other words, which counterfactual is most likely to result in a top-selling sales period?
 
 ```{r}
 # Predict success (no prediction intervals).
@@ -196,4 +194,3 @@ Once again, `iFood` has requested our help. They want statistically backed insig
 ```{r}
 
 ```
-
