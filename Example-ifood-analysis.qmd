@@ -1,0 +1,233 @@
+---
+title: "iFood Logistic Regression"
+format: docx
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+```
+
+Once again, `iFood` has requested our help. They want statistically backed insights into which types of customers have been most likely to respond to their previous marketing campaign(s). Let's perform the appropriate pre-processing and modeling steps to answer their question.
+
+## Import Data
+
+```{r}
+(ifood <- read_csv("ifood.csv"))
+```
+
+We're going to focus on drivers of response to the most recent campaign.
+
+## Data Cleaning and Exploration
+
+We'll do some simple data cleaning for this example by dropping any observations that have missing values.
+
+```{r}
+ifood <- ifood |>
+  drop_na()
+```
+
+Let's check some summary statistics. Some things to note:
+
+- The smallest birth year is 1893...this is unlikely to be a legitimate value.
+- Max income is 666666...again, this is unlikely to be a legitimate value.
+- Our variable of interest, response, consists of 1's and 0's, with about 15% of observations corresponding to 1's.
+
+```{r}
+summary(ifood)
+```
+
+View the observations with invalid values of `Year_Birth`. Looks like the majority of observations have `Year_Birth` values of 1940 or greater, which seems realistic based on when the data was collected (around 2013-2014). We'll replace values less than 1940 with 1940.
+
+```{r}
+ifood |>
+  arrange(Year_Birth)
+```
+
+Replace the invalid `Year_Birth` values.
+
+```{r}
+ifood <- ifood |>
+  mutate(Year_Birth = if_else(Year_Birth < 1940, 1940, Year_Birth))
+```
+
+Let's check the invalid income value(s). Looks like there is only one (666666), so we'll replace it with the next highest value (162397).
+
+```{r}
+ifood |>
+  arrange(desc(Income))
+```
+
+Replace invalid income value.
+
+```{r}
+ifood <- ifood |>
+  mutate(Income = if_else(Income == 666666, 162397, Income))
+```
+
+Do some simple data exploration by plotting the percentage of consumers who responded to the most recent marketing campaign as a function of the number of kids at home. There appears to be a negative relationship between the number of kids at home and the likelihood that a consumer responded to the most recent campaign. We'll investigate this further using the model.
+
+```{r}
+ifood |>
+  mutate(Kidhome = as.character(Kidhome)) |>
+  ggplot(aes(x = Kidhome, fill = as.factor(Response))) +
+  geom_bar(position = 'fill')
+```
+
+## Pre-Processing iFood
+
+Now that we've cleaned our data and done a little data exploration, we'll pre-process the data for our model. We're going to build a logistic regression for `Response` as a function of the following X variables:
+
+- Kidhome: based on our data exploration, more kids at home will be correlated with being less likely to respond to the campaign.
+- Income: customers with more income may be more likely to purchase/respond to the campaign.
+- Complain: customers who have complained may be less likely to respond to the campaign.
+- Recency: more recent customers may have a higher purchase propensity, and may be more likely to repond to campaigns.
+
+`Income` and `Recency` are numeric continuous variables. Since they are X variables (not a continuous Y variable) we won't bother with a log-transformation. Based on our previous summary statistics, complain is already a binary variable. We'll make dummy variables for the number of kids at home in order to consider the different numbers of kids separately.
+
+Our first step is to convert our Y variable into a factor (required for logistic regression) and `Kidhome` into a character variable so we can easily convert it into dummy variables.
+
+```{r}
+ifood <- ifood |>
+  mutate(Kidhome = as.character(Kidhome),
+         Response = as.factor(Response))
+```
+
+Do the train-test split. We'll include the `strata` argument, which ensures that the proportion of consumers who respond to the campaign is equal in both the training and testing data (this avoids a situation where the test data does not contain any customers who responded to the campaign).
+
+```{r}
+set.seed(42)
+
+ifood_split <- initial_split(data = ifood, prop = 0.85, strata = Response)
+```
+
+Define pre-processing recipe. Again, we are just creating dummy variables for the number of kids at home.
+
+```{r}
+# Prepare a preprocessing recipe.
+(ifood_recipe <- training(ifood_split) |> 
+  recipe(Response ~ Income + Recency + Kidhome + Complain) |> 
+  step_dummy(Kidhome) |> 
+  prep())
+```
+
+Pre-process the training and testing data sets.
+
+```{r}
+baked_training <- ifood_recipe |>
+  bake(training(ifood_split))
+
+baked_testing <- ifood_recipe |>
+  bake(testing(ifood_split))
+```
+
+Estimate the model for Response.
+
+```{r}
+# Fit a logistic regression.
+fit <- logistic_reg() |> 
+  set_engine("glm") |> 
+  fit(Response ~ ., data = baked_training)
+```
+
+Evaluate the model on the test data. Our model achieved 84% accuracy.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = baked_testing)|>
+  bind_cols(baked_testing) |>
+  accuracy(truth = Response, estimate = .pred_class)
+```
+
+If we calculate the proportion of non-responding consumers in the test data, we find that 84.9% did not respond.
+
+```{r}
+baked_testing |>
+  summarize(prop_no_response = mean(Response == 0))
+```
+
+So, overall, our model is not adding any value to our ability to predict whether customers will respond to a campaign. However, if we dig deeper into our model's performance using a confusion matrix, we see that 50 consumers who did respond to the campaign were predicted to not respond, representing a high false negative rate. If we reduce our prediction threshold, our model performance should improve.
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = baked_testing) |>
+  bind_cols(baked_testing) |>
+  conf_mat(truth = Response, estimate = .pred_class)
+```
+
+Reducing the threshold to reduce the false negative rate likely aligns well with iFood's business objectives. The cost to iFood of lost revenue from sending a customer a coupon who was going to purchase anyway is likely much less than the revenue gained from a customer who decides to make a purchase based on the campaign who would not have purchased otherwise.
+
+Let's choose a threshold of 0.40. This is somewhat arbitrary, however, we don't want to try a bunch of different thresholds to find the optimal one for the test data, *because then we would be overfitting our model to the test data*!
+
+```{r}
+threshold <- 0.40
+
+# Compute model accuracy.
+fit |> 
+  predict(new_data = baked_testing, type = "prob") |>
+  bind_cols(baked_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  accuracy(truth = Response, estimate = pred_y)
+```
+
+By reducing the threshold, our model is now correctly predicting four customers who responded to the campaign. We also slightly increased our false positive rate, but that is a tradeoff iFood should be willing to make (see previous explanation).
+
+```{r}
+# Confusion matrix.
+fit |> 
+  predict(new_data = baked_testing, type = "prob") |>
+  bind_cols(baked_testing) |>
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  conf_mat(truth = Response, estimate = pred_y)
+```
+
+As another point of comparison, let's estimate another model which includes variables on whether customers responded to previous campaigns. If previous campaigns have similar characteristics to the most recent campaign, then these variables might give us good information on who is likely to respond.
+
+```{r}
+# Prepare a preprocessing recipe.
+(ifood_recipe <- training(ifood_split) |> 
+  recipe(Response ~ Income + Recency + Kidhome + Complain +
+           AcceptedCmp1 + AcceptedCmp2 + AcceptedCmp3 + 
+           AcceptedCmp4 + AcceptedCmp5) |> 
+  step_dummy(Kidhome) |> 
+  prep())
+```
+
+Pre-process the training and testing data sets.
+
+```{r}
+baked_training <- ifood_recipe |>
+  bake(training(ifood_split))
+
+baked_testing <- ifood_recipe |>
+  bake(testing(ifood_split))
+```
+
+Estimate the model for Response.
+
+```{r}
+# Fit a logistic regression.
+fit <- logistic_reg() |> 
+  set_engine("glm") |> 
+  fit(Response ~ ., data = baked_training)
+```
+
+Evaluate the model on the test data. Our model achieved 88% accuracy, which is an improvement over the previous model and the baseline of predicting no response for all consumers.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = baked_testing)|>
+  bind_cols(baked_testing) |>
+  accuracy(truth = Response, estimate = .pred_class)
+```
+
+```{r}
+fit |>
+  tidy(conf.int = TRUE)
+```
+
+The coefficients for `Income`, `Complain`, the number of kids at home, and a response to Campaign 2 are not statistically significant. However, customers who purchased more recently have a higher probability of responding to the most recent campaign, indicating that this particularly campaign was not effective at getting less active customers to make a purchase. In addition, if a customer responded to Campaigns 1, 3, 4, or 5, they are more likely to make a purchase based on the most recent campaign. Overall, it appears that customer behavior is a better predictor of future behavior than actual customer demographics, at least for this particular iFood data set.

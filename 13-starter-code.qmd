@@ -58,7 +58,12 @@ soup_split <- initial_time_split(soup_data, prop = 0.90)
 Define a new recipe called `soup_recipe` based on the training data that prepares data for a model where `top_selling` is our dependent variable and `Any_Price_Decr_Spend` and `Retailer_Trade_Areas` are our independent variables. Include appropriate pre-processing steps and prep the recipe.
 
 ```{r}
-
+# Prepare a preprocessing recipe.
+(soup_recipe <- training(soup_split) |> 
+  recipe(top_selling ~ Any_Price_Decr_Spend + Retailer_Trade_Areas) |> 
+  step_log(Any_Price_Decr_Spend, offset = 1) |> 
+  step_dummy(Retailer_Trade_Areas) |> 
+  prep())
 ```
 
 Apply the recipe to the training and testing data.
@@ -97,6 +102,13 @@ fit |>
   accuracy(truth = top_selling, estimate = .pred_class)
 ```
 
+What is the proportion of sales periods that are not top selling?
+
+```{r}
+soup_testing |>
+  summarize(prop_not_top = mean(top_selling == 0))
+```
+
 Accuracy can also be summarized using a **confusion matrix**.
 
 ```{r}
@@ -125,9 +137,10 @@ Confusion matrix based on custom threshold.
 ```{r}
 # Confusion matrix.
 fit |> 
-  predict(new_data = soup_testing) |>
+  predict(new_data = soup_testing, type = "prob") |>
   bind_cols(soup_testing) |>
-  conf_mat(truth = top_selling, estimate = .pred_class)
+  mutate(pred_y = if_else(.pred_1 >= threshold, 1, 0) |> factor()) |>
+  conf_mat(truth = top_selling, estimate = pred_y)
 ```
 
 # Evaluate Parameters
@@ -192,5 +205,66 @@ predict(fit, new_data = scenarios, type = "prob") |>
 Once again, `iFood` has requested our help. They want statistically backed insights into which types of customers have been most likely to respond to their previous marketing campaign(s). Let's perform the appropriate pre-processing and modeling steps to answer their question.
 
 ```{r}
+(ifood <- read_csv("ifood.csv"))
+```
 
+We're going to focus on drivers of response to the most recent campaign.
+
+# Pre-Processing iFood
+
+```{r}
+ifood <- ifood |>
+  drop_na() |>
+  mutate(Kidhome = as.character(Kidhome),
+         Response = as.factor(Response))
+```
+
+Do the train-test split.
+
+```{r}
+# do we need to add strata?
+ifood_split <- initial_split(data = ifood, prop = 0.9)
+```
+
+```{r}
+training(ifood_split)
+```
+
+Define pre-processing recipe.
+
+```{r}
+# Prepare a preprocessing recipe.
+(ifood_recipe <- training(ifood_split) |> 
+  recipe(Response ~ Income + Recency + Kidhome) |> 
+  step_dummy(Kidhome) |> 
+  prep())
+```
+
+Pre-process the training and testing data sets.
+
+```{r}
+baked_training <- ifood_recipe |>
+  bake(training(ifood_split))
+
+baked_testing <- ifood_recipe |>
+  bake(testing(ifood_split))
+```
+
+Estimate the model for Response.
+
+```{r}
+# Fit a logistic regression.
+fit <- logistic_reg() |> 
+  set_engine("glm") |> 
+  fit(Response ~ ., data = baked_training)
+```
+
+Evaluate the model on the test data.
+
+```{r}
+# Compute model accuracy.
+fit |> 
+  predict(new_data = baked_testing)|>
+  bind_cols(baked_testing) |>
+  accuracy(truth = Response, estimate = .pred_class)
 ```
